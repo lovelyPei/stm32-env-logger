@@ -1,0 +1,12 @@
+Objects/
+Listings/
+.vscode/
+DebugConfig/
+*.uvguix.*
+*.uvoptx
+*.uvprojx.autoclaw.bak*
+*.autoclaw.bak*
+*.hex
+*.bin
+*.map
+*.lst
