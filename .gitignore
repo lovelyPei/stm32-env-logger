@@ -10,3 +10,12 @@ DebugConfig/
 *.bin
 *.map
 *.lst
+
+# 参考资料 PDF，不提交到仓库
+**/docs/*.pdf
+**/docs/annotated/*.pdf
+
+# 构建日志和临时备份
+*.build.log
+*.rebuild.log
+*.bak-before-groups
