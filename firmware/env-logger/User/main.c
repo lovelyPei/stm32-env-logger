@@ -1,10 +1,12 @@
 #include "stm32f10x.h"                  // Device header
 #include <string.h>
+#include <math.h>
 #include "Delay.h"
 #include "OLED.h"
 #include "MPU6050.h"
 #include "W25Q64.h"
 #include "Serial.h"
+#include "AD.h"
 
 /* 一条记录：4 + 6*2 = 16 字节 */
 typedef struct
@@ -27,6 +29,25 @@ uint8_t test_r[4];                      // 自检读回数据
 
 uint32_t record_count = 0;              // 已写记录数
 uint32_t time_s = 0;                    // 秒计数
+
+uint16_t ADC_T, ADC_L, ADC_P;           // 热敏、光敏、电位器原始值
+float temperature;                      // 热敏换算后的温度（°C）
+
+/* NTC 接 GND，固定 10k 接 VCC；Beta 公式换算温度 */
+float ADC_ToTemp(uint16_t adc)
+{
+    float r_ntc;
+    float temp_k;
+
+    if (adc == 0 || adc >= 4095)
+    {
+        return -99.0f;
+    }
+
+    r_ntc = 10000.0f * (float)adc / (4095.0f - (float)adc);
+    temp_k = 1.0f / (1.0f / 298.15f + (1.0f / 3950.0f) * logf(r_ntc / 10000.0f));
+    return temp_k - 273.15f;
+}
 
 void DumpRecords(void)
 {
@@ -59,6 +80,7 @@ int main(void)
     MPU6050_Init();                     // MPU6050 初始化
     W25Q64_Init();                      // W25Q64 初始化
     Serial_Init();                      // 串口初始化（9600）
+    AD_Init();                          // ADC 初始化（PA0/PA1/PA2）
 
     /* 1. 读 W25Q64 ID 并显示 */
     OLED_ShowString(1, 1, "W25Q64:");
@@ -108,11 +130,22 @@ int main(void)
 				Serial_Printf("Count = %u\r\n",record_count);
 			}
 
+						else if(strcmp(Serial_RxPacket, "adc") == 0)
+			{
+				Serial_Printf("ADC:%u,%u,%u,T=%dC\r\n", ADC_T, ADC_L, ADC_P, (int)temperature);
+			}
+
 			Serial_RxFlag = 0;
 		}
 
 
         MPU6050_GetData(&AX, &AY, &AZ, &GX, &GY, &GZ);
+
+        /* 读三路 ADC 原始值 */
+        ADC_T = AD_GetValue(ADC_Channel_0);   // 热敏 PA0
+        ADC_L = AD_GetValue(ADC_Channel_1);   // 光敏 PA1
+        ADC_P = AD_GetValue(ADC_Channel_2);   // 电位器 PA2
+        temperature = ADC_ToTemp(ADC_T);
 
 		rec.time_s = time_s;
 		rec.ax = AX;
@@ -146,14 +179,21 @@ int main(void)
 			}
 		}
 
-        /* OLED 显示：记录数、校验结果、AX、AY */
+        /* OLED 显示：记录数、三路 ADC、校验结果 */
         OLED_ShowString(1, 1, "REC:");
         OLED_ShowNum(1, 5, record_count, 6);
-        OLED_ShowString(2, 1, ok ? "LOG:OK" : "LOG:FAIL");
-        OLED_ShowString(3, 1, "AX:");
-        OLED_ShowSignedNum(3, 4, AX, 5);
-        OLED_ShowString(4, 1, "AY:");
-        OLED_ShowSignedNum(4, 4, AY, 5);
+
+        OLED_ShowString(2, 1, "T:");
+        OLED_ShowNum(2, 3, ADC_T, 4);
+        OLED_ShowString(2, 8, "L:");
+        OLED_ShowNum(2, 10, ADC_L, 4);
+
+        OLED_ShowString(3, 1, "C:");
+        OLED_ShowSignedNum(3, 3, (int32_t)temperature, 3);
+        OLED_ShowString(3, 8, "P:");
+        OLED_ShowNum(3, 10, ADC_P, 4);
+
+        OLED_ShowString(4, 1, ok ? "LOG:OK" : "LOG:FAIL");
 
         /* 串口打印一行 CSV：索引,秒,ax,ay,az,gx,gy,gz */
         Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d\r\n",
