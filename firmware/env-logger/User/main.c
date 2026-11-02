@@ -1,8 +1,10 @@
 #include "stm32f10x.h"                  // Device header
+#include <string.h>
 #include "Delay.h"
 #include "OLED.h"
 #include "MPU6050.h"
 #include "W25Q64.h"
+#include "Serial.h"
 
 /* 一条记录：4 + 6*2 = 16 字节 */
 typedef struct
@@ -26,6 +28,23 @@ uint8_t test_r[4];                      // 自检读回数据
 uint32_t record_count = 0;              // 已写记录数
 uint32_t time_s = 0;                    // 秒计数
 
+void DumpRecords(void)
+{
+    uint32_t i;
+	Record_t rec;
+
+	Serial_Printf("index,time_s,ax,ay,az,gx,gy,gz\r\n");
+
+	for(i = 0; i < record_count; i ++)
+	{
+		W25Q64_ReadData(i * sizeof(Record_t), (uint8_t *)&rec, sizeof(Record_t));
+		Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d\r\n",
+						i, rec.time_s, rec.ax, rec.ay, rec.az, rec.gx, rec.gy, rec.gz);
+	}
+
+	Serial_Printf("END\r\n");
+}
+
 int main(void)
 {
     uint32_t i;
@@ -39,6 +58,7 @@ int main(void)
     OLED_Init();                        // OLED 初始化
     MPU6050_Init();                     // MPU6050 初始化
     W25Q64_Init();                      // W25Q64 初始化
+    Serial_Init();                      // 串口初始化（9600）
 
     /* 1. 读 W25Q64 ID 并显示 */
     OLED_ShowString(1, 1, "W25Q64:");
@@ -71,9 +91,27 @@ int main(void)
     Delay_ms(2000);
     OLED_Clear();
 
+    /* 串口 CSV 表头 */
+    Serial_Printf("index,time_s,ax,ay,az,gx,gy,gz\r\n");
+
     /* 4. 数据记录主循环：每秒一条 */
     while (1)
     {
+		if(Serial_RxFlag == 1)
+		{
+			if(strcmp(Serial_RxPacket, "read") == 0)
+			{
+				DumpRecords();
+			}
+			else if(strcmp(Serial_RxPacket, "count") == 0)
+			{
+				Serial_Printf("Count = %u\r\n",record_count);
+			}
+
+			Serial_RxFlag = 0;
+		}
+
+
         MPU6050_GetData(&AX, &AY, &AZ, &GX, &GY, &GZ);
 
 		rec.time_s = time_s;
@@ -91,13 +129,13 @@ int main(void)
 			W25Q64_SectorErase(addr);
 		}
 
-		W25Q64_PageProgram(addr, (uint8_t *)&rec, sizeof(Record_t));
+		W25Q64_PageProgram(addr, (uint8_t *)&rec, (uint16_t)sizeof(Record_t));
 
 		W25Q64_ReadData(addr, (uint8_t *)&check, sizeof(Record_t));
 
 		ok = 1;
 		p1 = (uint8_t *)&rec;
-		p2 = (uint8_t* )&check;
+		p2 = (uint8_t *)&check;
 
 		for(i = 0; i < sizeof(Record_t); i ++)
 		{
@@ -116,6 +154,10 @@ int main(void)
         OLED_ShowSignedNum(3, 4, AX, 5);
         OLED_ShowString(4, 1, "AY:");
         OLED_ShowSignedNum(4, 4, AY, 5);
+
+        /* 串口打印一行 CSV：索引,秒,ax,ay,az,gx,gy,gz */
+        Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d\r\n",
+                      record_count, time_s, AX, AY, AZ, GX, GY, GZ);
 
         /* 下一条 */
         record_count++;
