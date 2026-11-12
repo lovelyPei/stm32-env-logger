@@ -9,7 +9,7 @@
 #include "AD.h"
 #include "Motor.h"
 
-/* 一条记录：4 + 6*2 = 16 字节 */
+/* 一条记录：32 字节，正好 128 条一个 4KB 扇区 */
 typedef struct
 {
     uint32_t time_s;    // 第几秒
@@ -19,7 +19,14 @@ typedef struct
     int16_t gx;         // 陀螺仪 X
     int16_t gy;         // 陀螺仪 Y
     int16_t gz;         // 陀螺仪 Z
+    uint16_t temp_raw;  // 热敏 ADC
+    uint16_t light_raw; // 光敏 ADC
+    uint16_t pot_raw;   // 电位器 ADC
+    uint8_t fan_on;     // 风扇状态
+    uint8_t reserved[9];// 填充到 32 字节
 } Record_t;
+
+#define RECORDS_PER_SECTOR (4096 / sizeof(Record_t))
 
 uint8_t ID;                             // MPU6050 ID
 int16_t AX, AY, AZ, GX, GY, GZ;         // MPU6050 原始数据
@@ -57,13 +64,15 @@ void DumpRecords(void)
     uint32_t i;
 	Record_t rec;
 
-	Serial_Printf("index,time_s,ax,ay,az,gx,gy,gz\r\n");
+	Serial_Printf("index,time_s,ax,ay,az,gx,gy,gz,temp,light,pot,fan\r\n");
 
 	for(i = 0; i < record_count; i ++)
 	{
 		W25Q64_ReadData(i * sizeof(Record_t), (uint8_t *)&rec, sizeof(Record_t));
-		Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d\r\n",
-						i, rec.time_s, rec.ax, rec.ay, rec.az, rec.gx, rec.gy, rec.gz);
+		Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u\r\n",
+						i, rec.time_s, rec.ax, rec.ay, rec.az, rec.gx, rec.gy, rec.gz,
+              (unsigned int)rec.temp_raw, (unsigned int)rec.light_raw,
+              (unsigned int)rec.pot_raw, (unsigned int)rec.fan_on);
 	}
 
 	Serial_Printf("END\r\n");
@@ -118,7 +127,7 @@ int main(void)
     OLED_Clear();
 
     /* 串口 CSV 表头 */
-    Serial_Printf("index,time_s,ax,ay,az,gx,gy,gz\r\n");
+    Serial_Printf("index,time_s,ax,ay,az,gx,gy,gz,temp,light,pot,fan\r\n");
 
     /* 4. 数据记录主循环：每秒一条 */
     while (1)
@@ -174,10 +183,15 @@ int main(void)
 		rec.gx = GX;
 		rec.gy = GY;
 		rec.gz = GZ;
+        rec.temp_raw = ADC_T;
+        rec.light_raw = ADC_L;
+        rec.pot_raw = ADC_P;
+        rec.fan_on = fan_on;
+        memset(rec.reserved, 0, sizeof(rec.reserved));
 
 		addr = record_count * sizeof(Record_t);
 
-		if(record_count % 256 == 0)
+		if(record_count % RECORDS_PER_SECTOR == 0)
 		{
 			W25Q64_SectorErase(addr);
 		}
@@ -217,8 +231,10 @@ int main(void)
         OLED_ShowString(4, 7, ok ? "LOG:OK" : "LOG:FAIL");
 
         /* 串口打印一行 CSV：索引,秒,ax,ay,az,gx,gy,gz */
-        Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d\r\n",
-                      record_count, time_s, AX, AY, AZ, GX, GY, GZ);
+        Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u\r\n",
+                      record_count, time_s, AX, AY, AZ, GX, GY, GZ,
+                      (unsigned int)ADC_T, (unsigned int)ADC_L,
+                      (unsigned int)ADC_P, (unsigned int)fan_on);
 
         /* 下一条 */
         record_count++;
