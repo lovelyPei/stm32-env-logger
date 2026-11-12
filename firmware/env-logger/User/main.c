@@ -7,6 +7,7 @@
 #include "W25Q64.h"
 #include "Serial.h"
 #include "AD.h"
+#include "Motor.h"
 
 /* 一条记录：4 + 6*2 = 16 字节 */
 typedef struct
@@ -32,6 +33,8 @@ uint32_t time_s = 0;                    // 秒计数
 
 uint16_t ADC_T, ADC_L, ADC_P;           // 热敏、光敏、电位器原始值
 float temperature;                      // 热敏换算后的温度（°C）
+float set_temp;                         // 设定温度（°C）
+uint8_t fan_on;                         // 风扇状态
 
 /* NTC 接 GND，固定 10k 接 VCC；Beta 公式换算温度 */
 float ADC_ToTemp(uint16_t adc)
@@ -81,6 +84,7 @@ int main(void)
     W25Q64_Init();                      // W25Q64 初始化
     Serial_Init();                      // 串口初始化（9600）
     AD_Init();                          // ADC 初始化（PA0/PA1/PA2）
+    Motor_Init();                       // 电机 PWM 初始化
 
     /* 1. 读 W25Q64 ID 并显示 */
     OLED_ShowString(1, 1, "W25Q64:");
@@ -132,7 +136,8 @@ int main(void)
 
 						else if(strcmp(Serial_RxPacket, "adc") == 0)
 			{
-				Serial_Printf("ADC:%u,%u,%u,T=%dC\r\n", ADC_T, ADC_L, ADC_P, (int)temperature);
+				Serial_Printf("ADC:%u,%u,%u,T=%dC,S=%dC,F=%d\r\n",
+                              ADC_T, ADC_L, ADC_P, (int)temperature, (int)set_temp, fan_on);
 			}
 
 			Serial_RxFlag = 0;
@@ -146,6 +151,21 @@ int main(void)
         ADC_L = AD_GetValue(ADC_Channel_1);   // 光敏 PA1
         ADC_P = AD_GetValue(ADC_Channel_2);   // 电位器 PA2
         temperature = ADC_ToTemp(ADC_T);
+
+        /* 电位器映射成 20~40°C 设定温度 */
+        set_temp = 20.0f + (ADC_P / 4095.0f) * 20.0f;
+
+        /* 滞回控制：高于设定 +0.5 开，低于设定 -0.5 关 */
+        if (temperature > set_temp + 0.5f)
+        {
+            fan_on = 1;
+        }
+        else if (temperature < set_temp - 0.5f)
+        {
+            fan_on = 0;
+        }
+
+        Motor_SetSpeed(fan_on ? 100 : 0);
 
 		rec.time_s = time_s;
 		rec.ax = AX;
@@ -193,7 +213,8 @@ int main(void)
         OLED_ShowString(3, 8, "P:");
         OLED_ShowNum(3, 10, ADC_P, 4);
 
-        OLED_ShowString(4, 1, ok ? "LOG:OK" : "LOG:FAIL");
+        OLED_ShowString(4, 1, fan_on ? "F:ON  " : "F:OFF ");
+        OLED_ShowString(4, 7, ok ? "LOG:OK" : "LOG:FAIL");
 
         /* 串口打印一行 CSV：索引,秒,ax,ay,az,gx,gy,gz */
         Serial_Printf("%u,%u,%d,%d,%d,%d,%d,%d\r\n",

@@ -714,6 +714,11 @@
               <FileType>1</FileType>
               <FilePath>.\Hardware\AD.c</FilePath>
             </File>
+            <File>
+              <FileName>Motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\Motor.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
